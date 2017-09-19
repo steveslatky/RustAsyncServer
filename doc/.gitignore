@@ -1,0 +1,3 @@
+# Don't commit generated files
+*.pdf
+*.log
