@@ -9,8 +9,8 @@ const CLIENT: Token = Token(1);
 
 fn start_server() {
 
-    let listener = TcpListener::bind(&"127.0.0.1:12345".parse().unwrap()).unwrap();
-    
+    let listener = TcpListener::bind(&"127.0.0.1:12345".parse().unwrap()).expect("Could not connect to local host");
+
     // Poll is a way to see when events are called. 
     let poll = Poll::new().unwrap();
     let mut events = Events::with_capacity(128);
@@ -25,9 +25,22 @@ fn start_server() {
     println!("Waiting for connection...");
 }
 
+// Event
+// Call when accpeting connection from client (socket)
+fn accept_callback(){
+
+}
+
+// Event 
+// Call when data is recived from client (socket)
+fn read_callback(){
+
+}
+
+
 
 fn main(){
-   start_server();  
+    start_server();  
 
 }
 
