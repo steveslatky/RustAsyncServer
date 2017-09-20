@@ -1,46 +1,43 @@
-extern crate mio;
+// A tiny async echo server with tokio-core
+extern crate futures;
+extern crate tokio_core;
+extern crate tokio_io;
 
-use mio::*;
-use mio::tcp::{TcpListener, TcpStream};
-use std::time::Duration;
+use futures::{Future, Stream};
+use tokio_io::{io, AsyncRead};
+use tokio_core::net::TcpListener;
+use tokio_core::reactor::Core;
 
-const SERVER: Token = Token(0);
-const CLIENT: Token = Token(1);
+fn main() {
+    // Create the event loop that will drive this server
+    let mut core = Core::new().unwrap();
+    let handle = core.handle();
 
-fn start_server() {
+    // Bind the server's socket
+    let addr = "127.0.0.1:1234".parse().unwrap();
+    let tcp = TcpListener::bind(&addr, &handle).unwrap();
 
-    let listener = TcpListener::bind(&"127.0.0.1:12345".parse().unwrap()).expect("Could not connect to local host");
+    // Iterate incoming connections
+    let server = tcp.incoming().for_each(|(tcp, _)| {
+        // Split up the read and write halves
+        let (reader, writer) = tcp.split();
 
-    // Poll is a way to see when events are called. 
-    let poll = Poll::new().unwrap();
-    let mut events = Events::with_capacity(128);
+        // Future of the copy
+        let bytes_copied = io::copy(reader, writer);
 
-    // Register the socket with `Poll`
-    poll.register(&listener, Token(0), Ready::writable(),
-    PollOpt::edge()).unwrap();
+        // ... after which we'll print what happened
+        let handle_conn = bytes_copied.map(|(n, _, _)| {
+            println!("wrote {} bytes", n)
+        }).map_err(|err| {
+            println!("IO error {:?}", err)
+        });
 
-    poll.poll(&mut events, Some(Duration::from_millis(100))).unwrap();
+        // Spawn the future as a concurrent task
+        handle.spawn(handle_conn);
 
-    // There may be a socket ready to be accepted
-    println!("Waiting for connection...");
+        Ok(())
+    });
+
+    // Spin up the server on the event loop
+    core.run(server).unwrap();
 }
-
-// Event
-// Call when accpeting connection from client (socket)
-fn accept_callback(){
-
-}
-
-// Event 
-// Call when data is recived from client (socket)
-fn read_callback(){
-
-}
-
-
-
-fn main(){
-    start_server();  
-
-}
-
