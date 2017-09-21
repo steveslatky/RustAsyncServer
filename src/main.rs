@@ -1,43 +1,102 @@
-// A tiny async echo server with tokio-core
+extern crate bytes;
 extern crate futures;
-extern crate tokio_core;
 extern crate tokio_io;
+extern crate tokio_proto;
+extern crate tokio_service;
 
-use futures::{Future, Stream};
-use tokio_io::{io, AsyncRead};
-use tokio_core::net::TcpListener;
-use tokio_core::reactor::Core;
+use std::io;
+use std::str;
+use bytes::BytesMut;
+use tokio_io::codec::{Encoder, Decoder};
+use tokio_proto::pipeline::ServerProto;
+use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_io::codec::Framed;
+use tokio_service::Service;
+use tokio_proto::TcpServer;
+use futures::{future, Future};
+
+pub struct LineProto;
+pub struct LineCodec;
+pub struct Echo;
+
+impl<T: AsyncRead + AsyncWrite + 'static> ServerProto<T> for LineProto {
+    /// For this protocol style, `Request` matches the `Item` type of the codec's `Decoder`
+    type Request = String;
+
+    /// For this protocol style, `Response` matches the `Item` type of the codec's `Encoder`
+    type Response = String;
+
+    /// A bit of boilerplate to hook in the codec:
+    type Transport = Framed<T, LineCodec>;
+    type BindTransport = Result<Self::Transport, io::Error>;
+    fn bind_transport(&self, io: T) -> Self::BindTransport {
+        Ok(io.framed(LineCodec))
+    }
+}
+
+impl Decoder for LineCodec {
+    //Changed item to be bytes the tut used String 
+    type Item = String; 
+    type Error = io::Error;
+
+    fn decode(&mut self, buf: &mut BytesMut) -> io::Result<Option<String>> {
+        if let Some(i) = buf.iter().position(|&b| b == b'\n') {
+            // remove the serialized frame from the buffer.
+            let line = buf.split_to(i);
+
+            // Also remove the '\n'
+            buf.split_to(1);
+
+            // Turn this data into a UTF string and return it in a Frame.
+            match str::from_utf8(&line) {
+                Ok(s) => Ok(Some(s.to_string())),
+                Err(_) => Err(io::Error::new(io::ErrorKind::Other,
+                                             "invalid UTF-8")),
+            }
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+impl Encoder for LineCodec {
+    type Item = String;
+    type Error = io::Error;
+
+    fn encode(&mut self, msg: String, buf: &mut BytesMut) -> io::Result<()> {
+        buf.extend(msg.as_bytes());
+        buf.extend(b"\n");
+        Ok(())
+    }
+}
+
+impl Service for Echo {
+    // These types must match the corresponding protocol types:
+    type Request = String;
+    type Response = String;
+
+    // For non-streaming protocols, service errors are always io::Error
+    type Error = io::Error;
+
+    // The future for computing the response; box it for simplicity.
+    type Future = Box<Future<Item = Self::Response, Error =  Self::Error>>;
+
+    // Produce a future for computing a response from a request.
+    fn call(&self, req: Self::Request) -> Self::Future {
+        // In this case, the response is immediate.
+        Box::new(future::ok(req))
+    }
+}
+
 
 fn main() {
-    // Create the event loop that will drive this server
-    let mut core = Core::new().unwrap();
-    let handle = core.handle();
-
-    // Bind the server's socket
+    // Specify the localhost address
     let addr = "127.0.0.1:1234".parse().unwrap();
-    let tcp = TcpListener::bind(&addr, &handle).unwrap();
 
-    // Iterate incoming connections
-    let server = tcp.incoming().for_each(|(tcp, _)| {
-        // Split up the read and write halves
-        let (reader, writer) = tcp.split();
+    // The builder requires a protocol and an address
+    let server = TcpServer::new(LineProto, addr);
 
-        // Future of the copy
-        let bytes_copied = io::copy(reader, writer);
-
-        // ... after which we'll print what happened
-        let handle_conn = bytes_copied.map(|(n, _, _)| {
-            println!("wrote {} bytes", n)
-        }).map_err(|err| {
-            println!("IO error {:?}", err)
-        });
-
-        // Spawn the future as a concurrent task
-        handle.spawn(handle_conn);
-
-        Ok(())
-    });
-
-    // Spin up the server on the event loop
-    core.run(server).unwrap();
+    // We provide a way to *instantiate* the service for each new
+    // connection; here, we just immediately return a new instance.
+    server.serve(|| Ok(Echo));
 }
